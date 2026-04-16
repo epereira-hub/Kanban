@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kanban Board</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --col-backlog:   #6366f1;
+      --col-processo:  #f59e0b;
+      --col-validacao: #3b82f6;
+      --col-concluido: #10b981;
+      --bg:            #f4f5f7;
+      --surface:       #ffffff;
+      --border:        #e2e8f0;
+      --text:          #1e293b;
+      --text-muted:    #64748b;
+      --shadow:        0 1px 3px rgba(0,0,0,.08);
+      --radius:        10px;
+      --radius-sm:     6px;
+    }
+
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 2rem; height: 60px; display: flex; align-items: center;
+      justify-content: space-between; position: sticky; top: 0; z-index: 100;
+    }
+    .logo { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .header-actions { display: flex; gap: 10px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: var(--radius-sm);
+      font-size: 14px; font-weight: 500; cursor: pointer; border: none;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-primary:hover { opacity: .9; }
+    .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--bg); }
+
+    #toast {
+      position: fixed; bottom: 2rem; right: 2rem;
+      background: #1e293b; color: #fff; padding: 10px 18px;
+      border-radius: var(--radius-sm); font-size: 14px;
+      opacity: 0; transform: translateY(8px);
+      transition: opacity .25s, transform .25s;
+      z-index: 9999; pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    .loading-bar {
+      height: 3px; background: #6366f1;
+      position: fixed; top: 0; left: 0; width: 0; z-index: 9999;
+      transition: width .4s ease;
+    }
+    .loading-bar.on   { width: 75%; }
+    .loading-bar.done { width: 100%; opacity: 0; transition: width .3s, opacity .3s ease .3s; }
+
+    .board-wrapper { padding: 1.5rem 2rem; overflow-x: auto; }
+    .board {
+      display: grid; grid-template-columns: repeat(4, minmax(260px, 1fr));
+      gap: 16px; min-width: 1060px;
+    }
+
+    .column {
+      background: var(--surface); border-radius: var(--radius);
+      border: 1px solid var(--border); display: flex; flex-direction: column;
+      max-height: calc(100vh - 130px);
+    }
+    .column-header {
+      padding: 14px 16px 10px; display: flex; align-items: center;
+      justify-content: space-between; border-bottom: 2px solid transparent;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .column[data-col="Backlog"]              .column-header { border-color: var(--col-backlog); }
+    .column[data-col="Em Processo"]          .column-header { border-color: var(--col-processo); }
+    .column[data-col="Aguardando Validação"] .column-header { border-color: var(--col-validacao); }
+    .column[data-col="Concluído"]            .column-header { border-color: var(--col-concluido); }
+
+    .col-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+    .col-count { font-size: 12px; font-weight: 600; background: var(--bg); border-radius: 999px; padding: 2px 8px; color: var(--text-muted); }
+
+    .cards-list {
+      flex: 1; overflow-y: auto; padding: 12px;
+      display: flex; flex-direction: column; gap: 10px; min-height: 60px;
+    }
+    .cards-list.drag-over { background: rgba(99,102,241,.05); border-radius: 0 0 var(--radius) var(--radius); }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px 14px; cursor: grab;
+      box-shadow: var(--shadow); transition: box-shadow .15s;
+    }
+    .card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+    .card.dragging { opacity: .45; cursor: grabbing; }
+
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .card-title { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.4; flex: 1; }
+    .card-title a { color: inherit; text-decoration: none; }
+    .card-title a:hover { text-decoration: underline; color: #6366f1; }
+
+    .card-delete { background: none; border: none; cursor: pointer; color: var(--text-muted); opacity: 0; transition: opacity .15s; padding: 2px; font-size: 16px; line-height: 1; }
+    .card:hover .card-delete { opacity: 1; }
+    .card-delete:hover { color: #ef4444; }
+
+    .card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .04em; }
+    .badge-seo   { background: #ede9fe; color: #6d28d9; }
+    .badge-geo   { background: #d1fae5; color: #065f46; }
+    .badge-none  { background: #f1f5f9; color: #64748b; }
+    .badge-month { background: #fff7ed; color: #c2410c; }
+
+    .empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px 12px; color: var(--text-muted); font-size: 13px; text-align: center; pointer-events: none; }
+
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 500; align-items: center; justify-content: center; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: var(--surface); border-radius: var(--radius); padding: 28px; width: 100%; max-width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,.18); animation: slideUp .2s ease; }
+    @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text-muted); }
+    .form-group input, .form-group select {
+      width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 14px; color: var(--text);
+      background: var(--surface); outline: none; transition: border-color .15s;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .status-ok  { background: #10b981; }
+    .status-err { background: #ef4444; }
+    #apiStatus  { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; }
+  </style>
+</head>
+<body>
+
+<div class="loading-bar" id="loadingBar"></div>
+
+<header>
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/><rect x="14" y="17" width="7" height="4" rx="1"/>
+    </svg>
+    Kanban Board
+  </div>
+  <div class="header-actions">
+    <span id="apiStatus"><span class="status-dot" id="statusDot"></span><span id="statusText">conectando…</span></span>
+    <button class="btn btn-ghost" id="btnRefresh">↺ Atualizar</button>
+    <button class="btn btn-primary" id="btnNewCard">+ Novo Card</button>
+  </div>
+</header>
+
+<div class="board-wrapper">
+  <div class="board" id="board">
+    <div class="column" data-col="Backlog">
+      <div class="column-header"><span class="col-title">Backlog</span><span class="col-count" id="cnt-Backlog">0</span></div>
+      <div class="cards-list" id="list-Backlog"></div>
+    </div>
+    <div class="column" data-col="Em Processo">
+      <div class="column-header"><span class="col-title">Em Processo</span><span class="col-count" id="cnt-Em Processo">0</span></div>
+      <div class="cards-list" id="list-Em Processo"></div>
+    </div>
+    <div class="column" data-col="Aguardando Validação">
+      <div class="column-header"><span class="col-title">Aguardando Validação</span><span class="col-count" id="cnt-Aguardando Validação">0</span></div>
+      <div class="cards-list" id="list-Aguardando Validação"></div>
+    </div>
+    <div class="column" data-col="Concluído">
+      <div class="column-header"><span class="col-title">Concluído</span><span class="col-count" id="cnt-Concluído">0</span></div>
+      <div class="cards-list" id="list-Concluído"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <h2 id="modalTitle">Novo Card</h2>
+    <div class="form-group"><label>Título *</label><input type="text" id="fTitulo" placeholder="Descreva a tarefa…" /></div>
+    <div class="form-group"><label>URL da Tarefa</label><input type="url" id="fUrl" placeholder="https://…" /></div>
+    <div class="form-group">
+      <label>Tipo</label>
+      <select id="fTipo"><option value="">— Selecione —</option><option value="SEO">SEO</option><option value="GEO">GEO</option></select>
+    </div>
+    <div class="form-group">
+      <label>Mês</label>
+      <select id="fMes">
+        <option value="">— Selecione —</option>
+        <option>Janeiro</option><option>Fevereiro</option><option>Março</option>
+        <option>Abril</option><option>Maio</option><option>Junho</option>
+        <option>Julho</option><option>Agosto</option><option>Setembro</option>
+        <option>Outubro</option><option>Novembro</option><option>Dezembro</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Coluna Inicial</label>
+      <select id="fColuna">
+        <option value="Backlog">Backlog</option>
+        <option value="Em Processo">Em Processo</option>
+        <option value="Aguardando Validação">Aguardando Validação</option>
+        <option value="Concluído">Concluído</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="btnCancel">Cancelar</button>
+      <button class="btn btn-primary" id="btnSave">Salvar Card</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ── CONFIG ───────────────────────────────────────────────
+  const API_URL = 'https://script.google.com/macros/s/AKfycbz8Q_Tg_klR3R9Bj5cp3-qKKXvC_a9Ik8xxgBHP-aPjVf8xfwE3fST3o-u4q91WuCVo/exec';
+  // ────────────────────────────────────────────────────────
+
+  const COLUMNS = ['Backlog', 'Em Processo', 'Aguardando Validação', 'Concluído'];
+  let cards = [];
+  let draggedId = null;
+
+  const $ = id => document.getElementById(id);
+  let toastTimer;
+
+  function toast(msg, dur = 2800) {
+    const el = $('toast'); el.textContent = msg; el.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), dur);
+  }
+
+  function loading(on) {
+    const b = $('loadingBar');
+    b.className = on ? 'loading-bar on' : 'loading-bar done';
+    if (!on) setTimeout(() => b.className = 'loading-bar', 700);
+  }
+
+  function setStatus(ok, msg) {
+    $('statusDot').className = 'status-dot ' + (ok ? 'status-ok' : 'status-err');
+    $('statusText').textContent = msg;
+  }
+
+  function genId() { return 'c' + Date.now() + Math.random().toString(36).slice(2,6); }
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // ── RENDER ───────────────────────────────────────────────
+  function render() {
+    COLUMNS.forEach(col => {
+      const list = $(`list-${col}`);
+      const cc   = cards.filter(c => c.status === col);
+      $(`cnt-${col}`).textContent = cc.length;
+      if (!cc.length) {
+        list.innerHTML = `<div class="empty-state"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.3"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12h6M12 9v6"/></svg>Nenhum card</div>`;
+        return;
+      }
+      list.innerHTML = cc.map(c => `
+        <div class="card" draggable="true" data-id="${c.id}">
+          <div class="card-header">
+            <div class="card-title">
+              ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.titulo)}</a>` : esc(c.titulo)}
+            </div>
+            <button class="card-delete" data-id="${c.id}" title="Remover">✕</button>
+          </div>
+          <div class="card-meta">
+            ${c.tipo==='SEO' ? '<span class="badge badge-seo">SEO</span>' : ''}
+            ${c.tipo==='GEO' ? '<span class="badge badge-geo">GEO</span>' : ''}
+            ${!c.tipo        ? '<span class="badge badge-none">Sem tipo</span>' : ''}
+            ${c.mes          ? `<span class="badge badge-month">${esc(c.mes)}</span>` : ''}
+          </div>
+        </div>`).join('');
+    });
+    bindCards();
+  }
+
+  function bindCards() {
+    document.querySelectorAll('.card').forEach(el => {
+      el.addEventListener('dragstart', e => {
+        draggedId = el.dataset.id;
+        setTimeout(() => el.classList.add('dragging'), 0);
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      el.addEventListener('dragend', () => el.classList.remove('dragging'));
+    });
+    document.querySelectorAll('.card-delete').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!confirm('Remover este card?')) return;
+        removeCard(btn.dataset.id);
+      });
+    });
+  }
+
+  document.querySelectorAll('.cards-list').forEach(list => {
+    list.addEventListener('dragover',  e => { e.preventDefault(); list.classList.add('drag-over'); });
+    list.addEventListener('dragleave', () => list.classList.remove('drag-over'));
+    list.addEventListener('drop', async e => {
+      e.preventDefault(); list.classList.remove('drag-over');
+      if (!draggedId) return;
+      const newCol = list.closest('.column').dataset.col;
+      const card   = cards.find(c => c.id === draggedId);
+      if (!card || card.status === newCol) { draggedId = null; return; }
+      card.status = newCol; draggedId = null;
+      render();
+      await apiPost({ action: 'upsert', card });
+      toast(`Movido para "${newCol}"`);
+    });
+  });
+
+  // ── API — JSONP para GET (resolve CORS do Apps Script) ───
+  function fetchCards() {
+    return new Promise((resolve, reject) => {
+      loading(true);
+      const cbName = '_kcb' + Date.now();
+      const script = document.createElement('script');
+      const timeout = setTimeout(() => {
+        cleanup(); reject(new Error('timeout'));
+      }, 12000);
+
+      window[cbName] = data => {
+        cleanup(); resolve(data);
+      };
+
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      script.onerror = () => { cleanup(); reject(new Error('script error')); };
+      script.src = `${API_URL}?callback=${cbName}&t=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+
+  // ── API — POST via fetch com no-cors + iframe trick ──────
+  // Apps Script aceita POST mas o browser bloqueia a resposta.
+  // Usamos no-cors: os dados chegam na planilha, mas não lemos o retorno.
+  async function apiPost(payload) {
+    loading(true);
+    try {
+      await fetch(API_URL, {
+        method: 'POST',
+        mode: 'no-cors',           // ← chave: permite o envio sem ler resposta
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch(err) {
+      // no-cors sempre "falha" silenciosamente no catch — isso é normal
+      // Se chegou aqui por network error real, loga mas não bloqueia a UI
+      console.warn('POST warning (can be ignored if data saves):', err.message);
+    } finally {
+      loading(false);
+    }
+  }
+
+  async function loadCards() {
+    try {
+      const data = await fetchCards();
+      cards = Array.isArray(data) ? data : [];
+      render();
+      setStatus(true, 'conectado');
+    } catch(err) {
+      setStatus(false, 'erro na API');
+      toast('Erro ao carregar. Verifique a URL do Apps Script.', 5000);
+      loading(false);
+    }
+  }
+
+  async function removeCard(id) {
+    cards = cards.filter(c => c.id !== id);
+    render();
+    await apiPost({ action: 'delete', id });
+    toast('Card removido.');
+  }
+
+  // ── MODAL ────────────────────────────────────────────────
+  function openModal() {
+    $('modalTitle').textContent = 'Novo Card';
+    ['fTitulo','fUrl'].forEach(id => $(id).value = '');
+    ['fTipo','fMes'].forEach(id => $(id).value = '');
+    $('fColuna').value = 'Backlog';
+    $('modal').classList.add('open');
+    setTimeout(() => $('fTitulo').focus(), 50);
+  }
+  function closeModal() { $('modal').classList.remove('open'); }
+
+  $('btnNewCard').addEventListener('click', openModal);
+  $('btnCancel').addEventListener('click', closeModal);
+  $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
+
+  $('btnSave').addEventListener('click', async () => {
+    const titulo = $('fTitulo').value.trim();
+    if (!titulo) { $('fTitulo').focus(); toast('Informe um título.'); return; }
+    const card = {
+      id:     genId(),
+      titulo,
+      url:    $('fUrl').value.trim(),
+      tipo:   $('fTipo').value,
+      mes:    $('fMes').value,
+      status: $('fColuna').value
+    };
+    cards.push(card);
+    closeModal();
+    render();
+    await apiPost({ action: 'upsert', card });
+    toast('Card criado e salvo!');
+  });
+
+  $('btnRefresh').addEventListener('click', () => { toast('Atualizando…'); loadCards(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+    if ((e.ctrlKey||e.metaKey) && e.key === 'Enter' && $('modal').classList.contains('open')) $('btnSave').click();
+  });
+
+  loadCards();
+</script>
+</body>
+</html>
